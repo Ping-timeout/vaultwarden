@@ -137,6 +137,15 @@ jobs:
           path: target/${{ matrix.target-triple }}/release/vaultwarden${{ matrix.ext }}
       # End Upload artifact to Github Actions
 
+      - name: release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/${{ matrix.target-triple }}/release/vaultwarden${{ matrix.ext }}
+          tag: ${{ github.ref }}
+          asset_name: vaultwarden_$tag
+          overwrite: true
+          body: "https://github.com/dani-garcia/vaultwarden/releases"
 
       ## This is not used at the moment
       ## We could start using this when we can build static binaries

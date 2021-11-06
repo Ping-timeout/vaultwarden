@@ -105,7 +105,7 @@ fn sync(data: Form<SyncData>, headers: Headers, conn: DbConn) -> Json<Value> {
     let collections_json: Vec<Value> =
         collections.iter().map(|c| c.to_json_details(&headers.user.uuid, &conn)).collect();
 
-    let policies = OrgPolicy::find_by_user(&headers.user.uuid, &conn);
+    let policies = OrgPolicy::find_confirmed_by_user(&headers.user.uuid, &conn);
     let policies_json: Vec<Value> = policies.iter().map(OrgPolicy::to_json).collect();
 
     let ciphers = Cipher::find_by_user_visible(&headers.user.uuid, &conn);
@@ -248,7 +248,7 @@ fn post_ciphers_create(data: JsonUpcase<ShareCipherData>, headers: Headers, conn
     // This check is usually only needed in update_cipher_from_data(), but we
     // need it here as well to avoid creating an empty cipher in the call to
     // cipher.save() below.
-    enforce_personal_ownership_policy(&data.Cipher, &headers, &conn)?;
+    enforce_personal_ownership_policy(Some(&data.Cipher), &headers, &conn)?;
 
     let mut cipher = Cipher::new(data.Cipher.Type, data.Cipher.Name.clone());
     cipher.user_uuid = Some(headers.user.uuid.clone());
@@ -289,8 +289,8 @@ fn post_ciphers(data: JsonUpcase<CipherData>, headers: Headers, conn: DbConn, nt
 /// allowed to delete or share such ciphers to an org, however.
 ///
 /// Ref: https://bitwarden.com/help/article/policies/#personal-ownership
-fn enforce_personal_ownership_policy(data: &CipherData, headers: &Headers, conn: &DbConn) -> EmptyResult {
-    if data.OrganizationId.is_none() {
+fn enforce_personal_ownership_policy(data: Option<&CipherData>, headers: &Headers, conn: &DbConn) -> EmptyResult {
+    if data.is_none() || data.unwrap().OrganizationId.is_none() {
         let user_uuid = &headers.user.uuid;
         let policy_type = OrgPolicyType::PersonalOwnership;
         if OrgPolicy::is_applicable_to_user(user_uuid, policy_type, conn) {
@@ -309,7 +309,7 @@ pub fn update_cipher_from_data(
     nt: &Notify,
     ut: UpdateType,
 ) -> EmptyResult {
-    enforce_personal_ownership_policy(&data, headers, conn)?;
+    enforce_personal_ownership_policy(Some(&data), headers, conn)?;
 
     // Check that the client isn't updating an existing cipher with stale data.
     if let Some(dt) = data.LastKnownRevisionDate {
@@ -458,6 +458,8 @@ struct RelationsData {
 
 #[post("/ciphers/import", data = "<data>")]
 fn post_ciphers_import(data: JsonUpcase<ImportData>, headers: Headers, conn: DbConn, nt: Notify) -> EmptyResult {
+    enforce_personal_ownership_policy(None, &headers, &conn)?;
+
     let data: ImportData = data.into_inner().data;
 
     // Read and create the folders
@@ -687,12 +689,6 @@ fn put_cipher_share_selected(
         };
     }
 
-    let attachments = Attachment::find_by_ciphers(cipher_ids, &conn);
-
-    if !attachments.is_empty() {
-        err!("Ciphers should not have any attachments.")
-    }
-
     while let Some(cipher) = data.Ciphers.pop() {
         let mut shared_cipher_data = ShareCipherData {
             Cipher: cipher,
@@ -783,10 +779,7 @@ struct AttachmentRequestData {
     Key: String,
     FileName: String,
     FileSize: i32,
-    // We check org owner/admin status via is_write_accessible_to_user(),
-    // so we can just ignore this field.
-    //
-    // AdminRequest: bool,
+    AdminRequest: Option<bool>, // true when attaching from an org vault view
 }
 
 enum FileUploadType {
@@ -821,14 +814,17 @@ fn post_attachment_v2(
     attachment.save(&conn).expect("Error saving attachment");
 
     let url = format!("/ciphers/{}/attachment/{}", cipher.uuid, attachment_id);
+    let response_key = match data.AdminRequest {
+        Some(b) if b => "CipherMiniResponse",
+        _ => "CipherResponse",
+    };
 
     Ok(Json(json!({ // AttachmentUploadDataResponseModel
         "Object": "attachment-fileUpload",
         "AttachmentId": attachment_id,
         "Url": url,
         "FileUploadType": FileUploadType::Direct as i32,
-        "CipherResponse": cipher.to_json(&headers.host, &headers.user.uuid, &conn),
-        "CipherMiniResponse": null,
+        response_key: cipher.to_json(&headers.host, &headers.user.uuid, &conn),
     })))
 }
 

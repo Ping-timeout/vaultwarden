@@ -49,6 +49,7 @@ struct RegisterData {
     MasterPasswordHint: Option<String>,
     Name: Option<String>,
     Token: Option<String>,
+    #[allow(dead_code)]
     OrganizationUserId: Option<String>,
 }
 
@@ -62,11 +63,12 @@ struct KeysData {
 #[post("/accounts/register", data = "<data>")]
 fn register(data: JsonUpcase<RegisterData>, conn: DbConn) -> EmptyResult {
     let data: RegisterData = data.into_inner().data;
+    let email = data.Email.to_lowercase();
 
-    let mut user = match User::find_by_mail(&data.Email, &conn) {
+    let mut user = match User::find_by_mail(&email, &conn) {
         Some(user) => {
             if !user.password_hash.is_empty() {
-                if CONFIG.is_signup_allowed(&data.Email) {
+                if CONFIG.is_signup_allowed(&email) {
                     err!("User already exists")
                 } else {
                     err!("Registration not allowed or user already exists")
@@ -75,20 +77,24 @@ fn register(data: JsonUpcase<RegisterData>, conn: DbConn) -> EmptyResult {
 
             if let Some(token) = data.Token {
                 let claims = decode_invite(&token)?;
-                if claims.email == data.Email {
+                if claims.email == email {
                     user
                 } else {
                     err!("Registration email does not match invite email")
                 }
-            } else if Invitation::take(&data.Email, &conn) {
+            } else if Invitation::take(&email, &conn) {
                 for mut user_org in UserOrganization::find_invited_by_user(&user.uuid, &conn).iter_mut() {
                     user_org.status = UserOrgStatus::Accepted as i32;
                     user_org.save(&conn)?;
                 }
 
                 user
-            } else if CONFIG.is_signup_allowed(&data.Email) {
-                err!("Account with this email already exists")
+            } else if CONFIG.is_signup_allowed(&email) {
+                // check if it's invited by emergency contact
+                match EmergencyAccess::find_invited_by_grantee_email(&data.Email, &conn) {
+                    Some(_) => user,
+                    _ => err!("Account with this email already exists"),
+                }
             } else {
                 err!("Registration not allowed or user already exists")
             }
@@ -97,8 +103,8 @@ fn register(data: JsonUpcase<RegisterData>, conn: DbConn) -> EmptyResult {
             // Order is important here; the invitation check must come first
             // because the vaultwarden admin can invite anyone, regardless
             // of other signup restrictions.
-            if Invitation::take(&data.Email, &conn) || CONFIG.is_signup_allowed(&data.Email) {
-                User::new(data.Email.clone())
+            if Invitation::take(&email, &conn) || CONFIG.is_signup_allowed(&email) {
+                User::new(email.clone())
             } else {
                 err!("Registration not allowed or user already exists")
             }
@@ -106,7 +112,7 @@ fn register(data: JsonUpcase<RegisterData>, conn: DbConn) -> EmptyResult {
     };
 
     // Make sure we don't leave a lingering invitation.
-    Invitation::take(&data.Email, &conn);
+    Invitation::take(&email, &conn);
 
     if let Some(client_kdf_iter) = data.KdfIterations {
         user.client_kdf_iter = client_kdf_iter;
@@ -233,7 +239,7 @@ fn post_password(data: JsonUpcase<ChangePassData>, headers: Headers, conn: DbCon
 
     user.set_password(
         &data.NewMasterPasswordHash,
-        Some(vec![String::from("post_rotatekey"), String::from("get_contacts")]),
+        Some(vec![String::from("post_rotatekey"), String::from("get_contacts"), String::from("get_public_keys")]),
     );
     user.akey = data.Key;
     user.save(&conn)

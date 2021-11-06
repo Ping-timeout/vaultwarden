@@ -345,11 +345,32 @@ fn schedule_jobs(pool: db::DbPool) {
                 }));
             }
 
+            // Grant emergency access requests that have met the required wait time.
+            // This job should run before the emergency access reminders job to avoid
+            // sending reminders for requests that are about to be granted anyway.
+            if !CONFIG.emergency_request_timeout_schedule().is_empty() {
+                sched.add(Job::new(CONFIG.emergency_request_timeout_schedule().parse().unwrap(), || {
+                    api::emergency_request_timeout_job(pool.clone());
+                }));
+            }
+
+            // Send reminders to emergency access grantors that there are pending
+            // emergency access requests.
+            if !CONFIG.emergency_notification_reminder_schedule().is_empty() {
+                sched.add(Job::new(CONFIG.emergency_notification_reminder_schedule().parse().unwrap(), || {
+                    api::emergency_notification_reminder_job(pool.clone());
+                }));
+            }
+
             // Periodically check for jobs to run. We probably won't need any
             // jobs that run more often than once a minute, so a default poll
             // interval of 30 seconds should be sufficient. Users who want to
             // schedule jobs to run more frequently for some reason can reduce
             // the poll interval accordingly.
+            //
+            // Note that the scheduler checks jobs in the order in which they
+            // were added, so if two jobs are both eligible to run at a given
+            // tick, the one that was added earlier will run first.
             loop {
                 sched.tick();
                 thread::sleep(Duration::from_millis(CONFIG.job_poll_interval_ms()));

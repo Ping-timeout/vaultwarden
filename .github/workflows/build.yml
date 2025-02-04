@@ -204,3 +204,45 @@ jobs:
         run: |
           echo "### :tada: Checks Passed!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+
+
+
+      # Build the binary to upload to the artifacts
+      - name: "build features: sqlite,mysql,postgresql"
+        if: ${{ matrix.channel == 'rust-toolchain' }}
+        run: |
+          cargo build --release --features sqlite,mysql,postgresql
+      # End Build the binary
+
+
+      # Upload artifact to Github Actions
+      - name: "Upload artifact"
+        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v3.1.2
+        if: ${{ matrix.channel == 'rust-toolchain' }}
+        with:
+          name: vaultwarden
+          path: target/release/vaultwarden
+      # End Upload artifact to Github Actions
+
+
+      - name: release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/${{ matrix.target-triple }}/release/vaultwarden${{ matrix.ext }}
+          tag: ${{ github.ref }}
+          asset_name: vaultwarden_$tag
+          overwrite: true
+          body: "https://github.com/dani-garcia/vaultwarden/releases"
+
+      ## This is not used at the moment
+      ## We could start using this when we can build static binaries
+      # Upload to github actions release
+      # - name: Release
+      #   uses: Shopify/upload-to-release@1
+      #   if: startsWith(github.ref, 'refs/tags/')
+      #   with:
+      #     name: vaultwarden-${{ matrix.target-triple }}${{ matrix.ext }}
+      #     path: target/${{ matrix.target-triple }}/release/vaultwarden${{ matrix.ext }}
+      #     repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # End Upload to github actions release

@@ -45,7 +45,6 @@ jobs:
           - "rust-toolchain" # The version defined in rust-toolchain
           - "msrv" # The supported MSRV
 
-    name: Build and Test ${{ matrix.channel }}
 
     steps:
       # Checkout the repo
